@@ -129,28 +129,6 @@ class MockLLM:
             "{recommendations}"
         ),
     }
-        ),
-        "schedule_gap": (
-            "Schedule Gap Analysis: {airport}\n"
-            "-----------------------------------\n"
-            "Analysis Period: {period}\n"
-            "Identified Gaps: {gap_count}\n\n"
-            "Top Gaps:\n{gap_details}\n\n"
-            "Revenue Opportunity: ${revenue_opportunity}M annually\n"
-            "Recommendation: {recommendation}"
-        ),
-        "anomaly_report": (
-            "Anomaly Detection Report\n"
-            "========================\n"
-            "Scan Timestamp: {timestamp}\n"
-            "Anomalies Detected: {anomaly_count}\n"
-            "Severity Breakdown: Critical={critical}, High={high}, "
-            "Medium={medium}, Low={low}\n\n"
-            "Top Anomalies:\n{anomaly_details}\n\n"
-            "System Health: {system_health}\n"
-            "Recommended Actions: {recommendations}"
-        ),
-    }
 
     # ------------------------------------------------------------------ #
     # Enhanced rule functions with business logic
