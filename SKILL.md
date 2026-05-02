@@ -1,3 +1,9 @@
+---
+name: ua-network-intelligence
+description: Agent skills reference for the UA Network Intelligence multi-agent airline system
+version: "1.0.0"
+---
+
 # Agent Skills Reference
 
 Complete catalogue of every agent, its tools, inputs, and outputs in the UA Network Intelligence system.
