@@ -8,6 +8,10 @@ Provides an intuitive, real-time chat interface with:
 - Enhanced visual feedback
 - Better mobile responsiveness
 - Copy-to-clipboard for responses
+
+Fix: Both quick-suggestion buttons and text input now share a single
+response-generation code path via a "pending" session-state key, so
+the orchestrator always runs after a user message is submitted.
 """
 
 import streamlit as st
@@ -116,6 +120,99 @@ _CHAT_STYLES = """
 """
 
 
+def _generate_response(orchestrator, user_input: str, chat_key: str, history_key: str) -> None:
+    """Generate an assistant response and append it to the chat history.
+
+    This is the single code path for response generation, used by both
+    quick-suggestion buttons and the text input box.
+
+    Args:
+        orchestrator: OrchestratorAgent instance with a .route() method.
+        user_input: The user's query text.
+        chat_key: Unique session-state key for this chat instance.
+        history_key: Session-state key for the message history list.
+    """
+    with st.chat_message("assistant", avatar="🤖"):
+        status_placeholder = st.empty()
+        response_placeholder = st.empty()
+        metadata_placeholder = st.empty()
+        details_placeholder = st.empty()
+
+        status_placeholder.info("⏳ Analyzing your query...")
+
+        try:
+            response = orchestrator.route(user_input)
+            insight = response.insight or "No insight returned."
+
+            status_placeholder.empty()
+            with response_placeholder.container():
+                st.markdown(insight)
+
+            # Metadata display
+            with metadata_placeholder.container():
+                meta_col1, meta_col2 = st.columns([2, 1])
+
+                with meta_col1:
+                    metadata = []
+                    agent = response.responder or "unknown"
+                    metadata.append(
+                        f"<span class='metadata-pill'>🔧 {agent}</span>"
+                    )
+                    conf = response.confidence
+                    conf_class = (
+                        "confidence-high" if conf >= 0.7
+                        else "confidence-medium" if conf >= 0.4
+                        else "confidence-low"
+                    )
+                    metadata.append(
+                        f"<span class='metadata-pill {conf_class}'>📊 {conf:.0%} confidence</span>"
+                    )
+                    tools = response.tool_calls or []
+                    if tools:
+                        metadata.append(
+                            f"<span class='metadata-pill'>🛠️ {len(tools)} tools</span>"
+                        )
+                    st.markdown(" ".join(metadata), unsafe_allow_html=True)
+
+                with meta_col2:
+                    if st.button(
+                        "📋 Copy response",
+                        key=f"{chat_key}_copy_latest",
+                        use_container_width=True,
+                    ):
+                        st.success("✅ Copied!")
+
+            # Tool calls display
+            if tools:
+                with details_placeholder.container():
+                    with st.expander("🔍 View tool details", expanded=False):
+                        for tool_idx, tc in enumerate(tools, 1):
+                            st.caption(f"**Tool {tool_idx}:**")
+                            st.code(tc, language=None)
+
+            # Store in history
+            st.session_state[history_key].append({
+                "role": "assistant",
+                "content": insight,
+                "tool_calls": tools,
+                "confidence": conf,
+                "responder": agent,
+            })
+
+        except Exception as exc:
+            status_placeholder.empty()
+            error_msg = f"⚠️ Agent error: {str(exc)}"
+            response_placeholder.error(error_msg)
+
+            st.session_state[history_key].append({
+                "role": "assistant",
+                "content": error_msg,
+                "tool_calls": [],
+                "confidence": 0.0,
+                "responder": "error",
+            })
+
+
 def render_chat(
     orchestrator,
     chat_key: str = "global_chat",
@@ -138,6 +235,9 @@ def render_chat(
     if history_key not in st.session_state:
         st.session_state[history_key] = []
 
+    # Key for pending user message that needs a response
+    pending_key = f"{chat_key}_pending"
+
     # Quick suggestion prompts
     suggestions = [
         "📊 Analyze top routes",
@@ -147,8 +247,12 @@ def render_chat(
         "💰 Revenue analysis",
     ]
 
-    # Display quick suggestions (only if chat is empty)
-    if show_suggestions and len(st.session_state[history_key]) == 0:
+    # Display quick suggestions (only if chat is empty and no pending message)
+    if (
+        show_suggestions
+        and len(st.session_state[history_key]) == 0
+        and pending_key not in st.session_state
+    ):
         st.markdown("**Quick questions:**")
         cols = st.columns(len(suggestions))
         for col, suggestion in zip(cols, suggestions):
@@ -159,22 +263,15 @@ def render_chat(
                     use_container_width=True,
                     help=f"Ask: {suggestion}",
                 ):
-                    st.session_state[chat_key + "_suggested"] = suggestion
-
-        # Handle suggestion selection
-        if chat_key + "_suggested" in st.session_state:
-            user_input = st.session_state[chat_key + "_suggested"]
-            del st.session_state[chat_key + "_suggested"]
-            st.session_state[history_key].append(
-                {"role": "user", "content": user_input}
-            )
-            st.rerun()
+                    # Store the suggestion as a pending message and rerun
+                    # so the chat_input widget is rendered before we process
+                    st.session_state[pending_key] = suggestion
+                    st.rerun()
 
     # Display existing messages with enhanced styling
     for idx, entry in enumerate(st.session_state[history_key]):
         role = entry["role"]
         with st.chat_message(role, avatar="🤖" if role == "assistant" else "👤"):
-            # Main content
             content_col = st.container()
             with content_col:
                 st.markdown(entry["content"])
@@ -183,17 +280,12 @@ def render_chat(
                 if role == "assistant":
                     metadata_col1, metadata_col2 = st.columns([2, 1])
 
-                    # Metadata display
                     with metadata_col1:
                         metadata = []
-
-                        # Agent name
                         agent = entry.get("responder", "unknown")
                         metadata.append(
                             f"<span class='metadata-pill'>🔧 {agent}</span>"
                         )
-
-                        # Confidence score with color coding
                         conf = entry.get("confidence", 0)
                         conf_class = (
                             "confidence-high" if conf >= 0.7
@@ -203,17 +295,13 @@ def render_chat(
                         metadata.append(
                             f"<span class='metadata-pill {conf_class}'>📊 {conf:.0%} confidence</span>"
                         )
-
-                        # Tool count
                         tools = entry.get("tool_calls", [])
                         if tools:
                             metadata.append(
                                 f"<span class='metadata-pill'>🛠️ {len(tools)} tools</span>"
                             )
-
                         st.markdown(" ".join(metadata), unsafe_allow_html=True)
 
-                    # Copy button
                     with metadata_col2:
                         if st.button(
                             "📋 Copy",
@@ -221,132 +309,59 @@ def render_chat(
                             help="Copy response to clipboard",
                             use_container_width=True,
                         ):
-                            st.write(f"✅ Copied to clipboard!")
+                            st.write("✅ Copied to clipboard!")
 
-                    # Tool calls section - more compact
+                    # Tool calls section
                     if tools:
                         with st.expander("🔍 View tool details"):
                             for tool_idx, tc in enumerate(tools, 1):
                                 st.caption(f"Tool {tool_idx}")
                                 st.code(tc, language=None)
 
-    # Chat input with enhanced styling
+    # ------------------------------------------------------------------ #
+    # Determine if we have a pending user message to process
+    # ------------------------------------------------------------------ #
+    pending_input = None
+
+    # Check for pending quick-suggestion or follow-up message
+    if pending_key in st.session_state:
+        pending_input = st.session_state.pop(pending_key)
+
+    # Chat text input (always rendered so the widget is present)
     user_input = st.chat_input(placeholder, key=chat_key)
     if user_input:
-        # Show user message immediately
+        pending_input = user_input
+
+    # ------------------------------------------------------------------ #
+    # Process the pending input (from either source)
+    # ------------------------------------------------------------------ #
+    if pending_input:
+        # Add user message to history
         st.session_state[history_key].append(
-            {"role": "user", "content": user_input}
+            {"role": "user", "content": pending_input}
         )
+        # Display user message
         with st.chat_message("user", avatar="👤"):
-            st.markdown(user_input)
+            st.markdown(pending_input)
 
-        # Route through orchestrator with visual feedback
-        with st.chat_message("assistant", avatar="🤖"):
-            # Create placeholder for streaming effect
-            status_placeholder = st.empty()
-            response_placeholder = st.empty()
-            metadata_placeholder = st.empty()
-            details_placeholder = st.empty()
+        # Generate and display assistant response
+        _generate_response(orchestrator, pending_input, chat_key, history_key)
 
-            status_placeholder.info("⏳ Analyzing your query...")
-
-            try:
-                # Process through orchestrator
-                response = orchestrator.route(user_input)
-                insight = response.insight or "No insight returned."
-
-                # Clear status and show response
-                status_placeholder.empty()
-                with response_placeholder.container():
-                    st.markdown(insight)
-
-                # Display metadata
-                with metadata_placeholder.container():
-                    meta_col1, meta_col2 = st.columns([2, 1])
-
-                    with meta_col1:
-                        metadata = []
-
-                        # Agent name
-                        agent = response.responder or "unknown"
-                        metadata.append(
-                            f"<span class='metadata-pill'>🔧 {agent}</span>"
-                        )
-
-                        # Confidence with color
-                        conf = response.confidence
-                        conf_class = (
-                            "confidence-high" if conf >= 0.7
-                            else "confidence-medium" if conf >= 0.4
-                            else "confidence-low"
-                        )
-                        metadata.append(
-                            f"<span class='metadata-pill {conf_class}'>📊 {conf:.0%} confidence</span>"
-                        )
-
-                        # Tool count
-                        tools = response.tool_calls or []
-                        if tools:
-                            metadata.append(
-                                f"<span class='metadata-pill'>🛠️ {len(tools)} tools</span>"
-                            )
-
-                        st.markdown(" ".join(metadata), unsafe_allow_html=True)
-
-                    with meta_col2:
-                        if st.button(
-                            "📋 Copy response",
-                            key=f"{chat_key}_copy_latest",
-                            use_container_width=True,
-                        ):
-                            st.success("✅ Copied!")
-
-                # Tool calls - enhanced display
-                if tools:
-                    with details_placeholder.container():
-                        with st.expander("🔍 View tool details", expanded=False):
-                            for tool_idx, tc in enumerate(tools, 1):
-                                st.caption(f"**Tool {tool_idx}:**")
-                                st.code(tc, language=None)
-
-                # Store in history
-                st.session_state[history_key].append({
-                    "role": "assistant",
-                    "content": insight,
-                    "tool_calls": tools,
-                    "confidence": conf,
-                    "responder": agent,
-                })
-
-                # Provide follow-up suggestions
-                st.divider()
-                st.caption("💡 **Follow-up options:**")
-                follow_up_cols = st.columns(3)
-                follow_up_options = [
-                    "📊 Show more details",
-                    "❓ Explain further",
-                    "🔄 Try different approach",
-                ]
-                for col, option in zip(follow_up_cols, follow_up_options):
-                    with col:
-                        if st.button(
-                            option,
-                            key=f"{chat_key}_followup_{option}",
-                            use_container_width=True,
-                        ):
-                            st.session_state[chat_key + "_followup"] = option
-                            st.rerun()
-
-            except Exception as exc:
-                status_placeholder.empty()
-                error_msg = f"⚠️ Agent error: {str(exc)}"
-                response_placeholder.error(error_msg)
-
-                # Store error in history
-                st.session_state[history_key].append({
-                    "role": "assistant",
-                    "content": error_msg,
-                    "tool_calls": [],
-                    "confidence": 0.0,
-                    "responder": "error",
-                })
+        # Provide follow-up suggestions
+        st.divider()
+        st.caption("💡 **Follow-up options:**")
+        follow_up_cols = st.columns(3)
+        follow_up_options = [
+            "📊 Show more details",
+            "❓ Explain further",
+            "🔄 Try different approach",
+        ]
+        for col, option in zip(follow_up_cols, follow_up_options):
+            with col:
+                if st.button(
+                    option,
+                    key=f"{chat_key}_followup_{option}",
+                    use_container_width=True,
+                ):
+                    st.session_state[pending_key] = option
+                    st.rerun()
