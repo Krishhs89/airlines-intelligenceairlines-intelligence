@@ -334,11 +334,7 @@ class NetworkPlanningAgent(BaseAgent):
 
         # Count available aircraft of recommended type
         available_count = 0
-        if candidates:
-            available_count = int(
-                (aircraft_df["aircraft_type"] == recommended)
-                & (aircraft_df["status"] == "Active")
-            ).sum() if isinstance(recommended, str) else 0
+        if candidates and isinstance(recommended, str):
             available_mask = (
                 (aircraft_df["aircraft_type"] == recommended)
                 & (aircraft_df["status"] == "Active")

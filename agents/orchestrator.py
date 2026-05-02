@@ -16,7 +16,7 @@ from agents.analytics_insights import AnalyticsInsightsAgent
 from agents.disruption_analysis import DisruptionAnalysisAgent
 from agents.network_planning import NetworkPlanningAgent
 from data.store import DataStore
-from llm.mock_llm import MockLLM
+from llm.claude_llm import get_llm
 from mcp.context_store import MCPContextStore
 from mcp.protocol import MCPMessage, MCPResponse
 from mcp.tool_registry import MCPToolRegistry
@@ -90,7 +90,7 @@ class OrchestratorAgent(BaseAgent):
         self,
         context_store: MCPContextStore,
         tool_registry: MCPToolRegistry,
-        llm: MockLLM,
+        llm: Any,
         data_store: DataStore,
         network_planning: NetworkPlanningAgent,
         disruption_analysis: DisruptionAnalysisAgent,
@@ -140,8 +140,11 @@ class OrchestratorAgent(BaseAgent):
                 )
                 return agent_name
 
-        # Fallback to MockLLM
-        llm_intent = self.llm.classify_intent(query)
+        # Fallback to LLM (ClaudeLLM has classify_intent; MockLLM may not)
+        try:
+            llm_intent = self.llm.classify_intent(query)
+        except AttributeError:
+            llm_intent = "executive_summary"
         agent_name = self._LLM_INTENT_TO_AGENT.get(llm_intent, "analytics_insights")
         logger.info(
             "Intent classified via LLM '%s' -> %s", llm_intent, agent_name
@@ -156,7 +159,7 @@ class OrchestratorAgent(BaseAgent):
         """Classify intent, build MCPMessage, dispatch to the correct agent,
         store result, and return MCPResponse.
 
-        This is the primary entry point for user queries.
+        Applies guardrail validation on the input before dispatching.
 
         Args:
             user_query: Natural-language query from the user.
@@ -164,6 +167,29 @@ class OrchestratorAgent(BaseAgent):
         Returns:
             MCPResponse from the specialist agent.
         """
+        # Guardrail: validate and optionally sanitize input
+        from guardrails.validators import GuardrailValidator, ValidationError
+        guardrail = GuardrailValidator()
+        try:
+            gr = guardrail.validate_input(user_query)
+            if gr.sanitized_text:
+                user_query = gr.sanitized_text
+        except ValidationError as exc:
+            msg = MCPMessage(
+                sender="user",
+                recipient="orchestrator",
+                intent="blocked",
+                payload={"query": user_query},
+            )
+            return MCPResponse(
+                message_id=msg.message_id,
+                responder="guardrail",
+                result={"violations": exc.violations},
+                insight=f"Query blocked by safety guardrails: {exc}",
+                confidence=0.0,
+                tool_calls=[],
+            )
+
         # Classify
         agent_name = self._classify_intent(user_query)
         target_agent = self._agents[agent_name]
@@ -225,7 +251,7 @@ class OrchestratorAgent(BaseAgent):
         # Shared components
         context_store = MCPContextStore()
         tool_registry = MCPToolRegistry()
-        llm = MockLLM()
+        llm = get_llm()
         data_store = DataStore.get()
 
         # Specialist agents

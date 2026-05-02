@@ -96,9 +96,46 @@ SCENARIO_PRESETS: Dict[str, Dict] = {
 # --------------------------------------------------------------------------- #
 # LLM configuration
 # --------------------------------------------------------------------------- #
-USE_MOCK_LLM: bool = True
+import os
+
+USE_MOCK_LLM: bool = os.environ.get("USE_MOCK_LLM", "true").lower() == "true"
+
+# Anthropic Claude API (primary)
+CLAUDE_MODEL: str = "claude-opus-4-7"
+CLAUDE_MAX_TOKENS: int = 8192
+ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# AWS Bedrock (legacy fallback)
 BEDROCK_MODEL_ID: str = "anthropic.claude-3-sonnet-20240229-v1:0"
 BEDROCK_REGION: str = "us-east-1"
+
+# --------------------------------------------------------------------------- #
+# MCP Server configuration
+# --------------------------------------------------------------------------- #
+MCP_SERVER_NAME: str = "ua-network-intelligence"
+MCP_SERVER_VERSION: str = "1.0.0"
+MCP_SERVER_DESCRIPTION: str = (
+    "United Airlines Network Intelligence MCP Server — exposes 15 airline "
+    "planning tools for route analysis, disruption simulation, and analytics."
+)
+
+# --------------------------------------------------------------------------- #
+# A2A Protocol configuration
+# --------------------------------------------------------------------------- #
+A2A_HOST: str = os.environ.get("A2A_HOST", "0.0.0.0")
+A2A_PORT: int = int(os.environ.get("A2A_PORT", "8765"))
+A2A_AGENT_NAME: str = "UA Network Intelligence Agent"
+A2A_AGENT_VERSION: str = "1.0.0"
+A2A_BASE_URL: str = os.environ.get("A2A_BASE_URL", f"http://localhost:{A2A_PORT}")
+
+# --------------------------------------------------------------------------- #
+# Guardrails configuration
+# --------------------------------------------------------------------------- #
+GUARDRAIL_MAX_QUERY_LENGTH: int = 2000
+GUARDRAIL_MAX_RESPONSE_LENGTH: int = 10000
+GUARDRAIL_MIN_CONFIDENCE: float = 0.2
+GUARDRAIL_ENABLE_PII_DETECTION: bool = True
+GUARDRAIL_RATE_LIMIT_PER_MINUTE: int = 60
 
 # --------------------------------------------------------------------------- #
 # Application defaults
