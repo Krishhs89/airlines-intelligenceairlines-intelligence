@@ -140,6 +140,10 @@ elif selected_page == "Analytics & Insights":
     from ui.pages.analytics import render_analytics
     render_analytics()
 
+elif selected_page == "Chat":
+    from ui.pages.chat import render_chat_page
+    render_chat_page()
+
 elif selected_page == "Agent Trace":
     from ui.pages.agent_trace import render_agent_trace
     render_agent_trace()

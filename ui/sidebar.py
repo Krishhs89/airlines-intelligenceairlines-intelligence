@@ -10,6 +10,7 @@ from data.store import DataStore
 
 _PAGES = [
     "Dashboard",
+    "Chat",
     "Network Planning",
     "Disruption Simulator",
     "Analytics & Insights",
